@@ -9,7 +9,7 @@ IMAGE_LINK := https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cl
 IMAGE_PATH := ./images/
 CPUS := 2
 MEMORY_MB := 2048
-VM_COUNT = 1
+VM_COUNT := 1
 
 .ONESHELL:
 RUN_ARGS := $(wordlist 2,100,$(MAKECMDGOALS))

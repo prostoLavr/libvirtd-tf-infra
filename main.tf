@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.3" #
+  required_version = ">= 1.3"
   required_providers {
     libvirt = {
       source  = "dmacvicar/libvirt"
@@ -12,27 +12,25 @@ provider "libvirt" {
   uri = "qemu:///system"
 }
 
+
 resource "libvirt_cloudinit_disk" "commoninit" {
-  count     = var.vm_count
-  name      = "commoninit-${count.index}.iso"
-  pool      = "default"
+  count = var.vm_count
+  name  = "commoninit-${count.index}.iso"
+  pool  = "default"
+
   user_data = <<EOF
 #cloud-config
-hostname: fedora-node-${count.index}
+hostname: node-${count.index}
 users:
-  - name: fedora
+  - name: ansible
     sudo: ALL=(ALL) NOPASSWD:ALL
     groups: users, wheel
-    home: /home/fedora
+    home: /home/ansible
     shell: /bin/bash
     ssh_authorized_keys:
       - ${file("~/.ssh/id_ed25519.pub")}
 ssh_pwauth: false
 disable_root: true
-chpasswd:
-  list: |
-    fedora:password
-  expire: False
 EOF
 }
 
@@ -87,3 +85,4 @@ output "vm_ip" {
   }
   description = "Local IP"
 }
+

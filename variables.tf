@@ -17,3 +17,4 @@ variable "image_link" {
   type        = string
   description = "link to image"
 }
+

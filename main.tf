@@ -5,6 +5,10 @@ terraform {
       source  = "dmacvicar/libvirt"
       version = "~> 0.8.0"
     }
+    local = {
+      source  = "hashicorp/local"
+      version = "~> 2.5"
+    }
   }
 }
 
@@ -37,7 +41,7 @@ EOF
 resource "libvirt_volume" "fedora_base" {
   name   = "fedora_base.qcow2"
   pool   = "default"
-  source = "file:///home/lawrence/Downloads/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2"
+  source = var.vm_image
   format = "qcow2"
 }
 
@@ -56,6 +60,10 @@ resource "libvirt_domain" "fedora_vm" {
   vcpu   = var.cpus
 
   cloudinit = libvirt_cloudinit_disk.commoninit[count.index].id
+
+  cpu {
+    mode = "host-passthrough"
+  }
 
   network_interface {
     network_name   = "default"
@@ -86,3 +94,32 @@ output "vm_ip" {
   description = "Local IP"
 }
 
+resource "local_file" "hosts" {
+  filename = "./hosts.yaml"
+  content = templatefile("${path.module}/hosts.tpl.yml", {
+    servers = [
+      for vm in libvirt_domain.fedora_vm : {
+        name = vm.name
+        ip   = flatten(vm.network_interface[*].addresses)[0]
+      }
+    ]
+  })
+}
+
+resource "local_file" "inventory" {
+  filename = "./inventory.ini"
+  content = templatefile("${path.module}/inventory.tpl.ini", {
+    control_planes = [
+      for vm in slice(libvirt_domain.fedora_vm, 0, 1) : {
+        name = vm.name
+        ip   = flatten(vm.network_interface[*].addresses)[0]
+      }
+    ],
+    nodes = [
+      for vm in slice(libvirt_domain.fedora_vm, 1, length(libvirt_domain.fedora_vm)) : {
+        name = vm.name
+        ip   = flatten(vm.network_interface[*].addresses)[0]
+      }
+    ]
+  })
+}

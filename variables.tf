@@ -13,7 +13,7 @@ variable "vm_count" {
   description = "Count of virtual machines"
 }
 
-variable "image_link" {
+variable "vm_image" {
   type        = string
   description = "link to image"
 }

@@ -11,6 +11,7 @@ VM_IMAGE := $(IMAGE_PATH)$(notdir $(IMAGE_LINK))
 CPUS := 2
 MEMORY_MB := 2048
 VM_COUNT := 1
+INVENTORY_DIR_NAME := libvirtd-tf-infta
 
 .ONESHELL:
 RUN_ARGS := $(wordlist 2,100,$(MAKECMDGOALS))
@@ -34,7 +35,7 @@ build_tfvars:
 
 init:
 	# @systemctl start libvirtd
-	@terraform init
+	terraform init
 	echo "$(VM_IMAGE)"
 	@if [ -z "$$LIBVIRTD_TF_INFRA_IMAGE" ]; then \
 		if [ ! -d $(IMAGE_PATH) ]; then \
@@ -49,8 +50,38 @@ apply:
 	terraform apply
 
 destroy:
-	@terraform destroy
+	terraform destroy
 
-run: init build_tfvars apply ## Run virtual machines
+kubespray_check_inventory_dir:
+	@if [[ ! -d ./kubespray/inventory/$(INVENTORY_DIR_NAME) ]]; then
+		cp -r ./kubespray/inventory/sample/ ./kubespray/inventory/$(INVENTORY_DIR_NAME)/
+	fi
+
+kubespray_copy_inventory_ini:
+	cp ./inventory.ini ./kubespray/inventory/$(INVENTORY_DIR_NAME)/
+
+kubespray_venv:
+	@cd ./kubespray && \
+	if [[ ! -d ./venv ]]; then
+		python3 -m venv venv
+		./venv/bin/pip install -r requirements.txt
+	fi && \
+	cd ..
+
+kubespray_if_needed:
+	@if [[ -n "$$LIBVIRTD_TF_INFRA_KUBESPRAY" ]]; then
+		$(MAKE) kubespray_venv
+		$(MAKE) kubespray_check_inventory_dir
+		$(MAKE) kubespray_copy_inventory_ini
+		cd kubespray && \
+		./venv/bin/ansible-playbook \
+			-i inventory/$(INVENTORY_DIR_NAME)/inventory.ini \
+			-b -v \
+			-u ansible \
+			--private-key=~/.ssh/id_ed25519 \
+			cluster.yml
+	fi
+
+run: init build_tfvars apply kubespray_if_needed ## Run virtual machines
 
 stop: destroy ## Stop virtual machines

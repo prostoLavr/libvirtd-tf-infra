@@ -16,57 +16,64 @@ provider "libvirt" {
   uri = "qemu:///system"
 }
 
-
-resource "libvirt_cloudinit_disk" "commoninit" {
-  count = var.vm_count
-  name  = "commoninit-${count.index}.iso"
+resource "libvirt_cloudinit_disk" "control_plane_commoninit" {
+  count = var.control_plane_count
+  name  = "control_plane_commoninit-${count.index}.iso"
   pool  = "default"
 
-  user_data = <<EOF
-#cloud-config
-hostname: node-${count.index}
-users:
-  - name: ansible
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    groups: users, wheel
-    home: /home/ansible
-    shell: /bin/bash
-    ssh_authorized_keys:
-      - ${file("~/.ssh/id_ed25519.pub")}
-ssh_pwauth: false
-disable_root: true
-EOF
+  user_data = templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
+    hostname = "control-plane-${count.index}"
+    ssh_key  = file(var.public_ssh_key_path)
+  })
 }
 
-resource "libvirt_volume" "fedora_base" {
-  name   = "fedora_base.qcow2"
+resource "libvirt_cloudinit_disk" "worker_commoninit" {
+  count = var.node_count
+  name  = "worker_commoninit-${count.index}.iso"
+  pool  = "default"
+  user_data = templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
+    hostname = "node-${count.index}"
+    ssh_key  = file(var.public_ssh_key_path)
+  })
+}
+
+resource "libvirt_volume" "os_base" {
+  name   = "os-base-${basename(var.vm_image)}"
   pool   = "default"
   source = var.vm_image
   format = "qcow2"
 }
 
-resource "libvirt_volume" "vm_disk" {
-  count          = var.vm_count
-  name           = "libvirt-tf-infra-vm-disk-${count.index}.qcow2"
-  base_volume_id = libvirt_volume.fedora_base.id
+resource "libvirt_volume" "control_plane_disk" {
+  count          = var.control_plane_count
+  name           = "control-plane-vm-disk-${count.index}.qcow2"
+  base_volume_id = libvirt_volume.os_base.id
   pool           = "default"
-  size           = 21474836480 # 20 GB, make flexable 
+  size           = var.control_plane_disk_size_gb * 1024 * 1024 * 1024
 }
 
-resource "libvirt_volume" "vm_raw_disk" {
-  count = var.vm_count
+resource "libvirt_volume" "node_disk" {
+  count          = var.node_count
+  name           = "node-vm-disk-${count.index}.qcow2"
+  base_volume_id = libvirt_volume.os_base.id
+  pool           = "default"
+  size           = var.node_disk_size_gb * 1024 * 1024 * 1024
+}
+
+resource "libvirt_volume" "node_raw_disk" {
+  count = var.node_additional_raw_disk_size_gb > 0 ? var.node_count : 0
   name  = "libvirt-tf-infra-vm-raw-disk-${count.index}.qcow2"
   pool  = "default"
-  size  = 21474836480 # 20 GB, make flexable 
+  size  = var.node_additional_raw_disk_size_gb * 1024 * 1024 * 1024
 }
 
-resource "libvirt_domain" "libvirt_tf_infra_vm" {
-  count  = var.vm_count
-  name   = "libvirt-tf-infra-local-vm-${count.index}"
-  memory = var.memory_mb
-  vcpu   = var.cpus
+resource "libvirt_domain" "control_plane_vm" {
+  count  = var.control_plane_count
+  name   = "control-plane-${count.index}"
+  memory = var.control_plane_memory_mb
+  vcpu   = var.control_plane_cpus
 
-  cloudinit = libvirt_cloudinit_disk.commoninit[count.index].id
+  cloudinit = libvirt_cloudinit_disk.control_plane_commoninit[count.index].id
 
   cpu {
     mode = "host-passthrough"
@@ -78,14 +85,49 @@ resource "libvirt_domain" "libvirt_tf_infra_vm" {
   }
 
   disk {
-    volume_id = libvirt_volume.vm_disk[count.index].id
+    volume_id = libvirt_volume.control_plane_disk[count.index].id
   }
 
-  # TODO: don't attach when ROOK-CEPH is not activated
+  console {
+    type        = "pty"
+    target_port = "0"
+    target_type = "serial"
+  }
+
+  graphics {
+    type        = "spice"
+    listen_type = "address"
+    autoport    = true
+  }
+}
+resource "libvirt_domain" "node_vm" {
+  count  = var.node_count
+  name   = "node-${count.index}"
+  memory = var.node_memory_mb
+  vcpu   = var.node_cpus
+
+  cloudinit = libvirt_cloudinit_disk.worker_commoninit[count.index].id
+
+  cpu {
+    mode = "host-passthrough"
+  }
+
+  network_interface {
+    network_name   = "default"
+    wait_for_lease = true
+  }
+
   disk {
-    volume_id = libvirt_volume.vm_raw_disk[count.index].id
+    volume_id = libvirt_volume.node_disk[count.index].id
   }
 
+  dynamic "disk" {
+    for_each = var.node_additional_raw_disk_size_gb > 0 ? [1] : []
+
+    content {
+      volume_id = libvirt_volume.node_raw_disk[count.index].id
+    }
+  }
 
   console {
     type        = "pty"
@@ -100,39 +142,4 @@ resource "libvirt_domain" "libvirt_tf_infra_vm" {
   }
 }
 
-output "vm_ip" {
-  value = {
-    for vm in libvirt_domain.libvirt_tf_infra_vm : vm.name => flatten(vm.network_interface[*].addresses)
-  }
-  description = "Local IP"
-}
 
-resource "local_file" "hosts" {
-  filename = "./hosts.yaml"
-  content = templatefile("${path.module}/hosts.tpl.yml", {
-    servers = [
-      for vm in libvirt_domain.libvirt_tf_infra_vm : {
-        name = vm.name
-        ip   = flatten(vm.network_interface[*].addresses)[0]
-      }
-    ]
-  })
-}
-
-resource "local_file" "inventory" {
-  filename = "./inventory.ini"
-  content = templatefile("${path.module}/inventory.tpl.ini", {
-    control_planes = [
-      for vm in slice(libvirt_domain.libvirt_tf_infra_vm, 0, 1) : {
-        name = vm.name
-        ip   = flatten(vm.network_interface[*].addresses)[0]
-      }
-    ],
-    nodes = [
-      for vm in slice(libvirt_domain.libvirt_tf_infra_vm, 1, length(libvirt_domain.libvirt_tf_infra_vm)) : {
-        name = vm.name
-        ip   = flatten(vm.network_interface[*].addresses)[0]
-      }
-    ]
-  })
-}

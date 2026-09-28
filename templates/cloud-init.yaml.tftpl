@@ -1,0 +1,13 @@
+#cloud-config
+hostname: ${hostname}
+users:
+  - name: ansible
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users, wheel
+    home: /home/ansible
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ${ssh_key}
+ssh_pwauth: false
+disable_root: true
+

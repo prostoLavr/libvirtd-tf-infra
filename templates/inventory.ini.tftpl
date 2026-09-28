@@ -1,0 +1,29 @@
+[all]
+%{ for index, control_plane in control_planes ~}
+${control_plane.name} ansible_host=${control_plane.ip}
+%{ endfor }
+%{ for index, node in nodes ~}
+${node.name} ansible_host=${node.ip}
+%{ endfor }
+
+[kube_control_plane]
+%{ for index, control_plane in control_planes ~}
+${control_plane.name}
+%{ endfor }
+
+[etcd]
+%{ for index, control_plane in control_planes ~}
+${control_plane.name}
+%{ endfor }
+
+[kube_node]
+%{ for index, node in nodes ~}
+${node.name}
+%{ endfor }
+
+[k8s_cluster:children]
+kube_control_plane
+kube_node
+
+[calico_rr]
+

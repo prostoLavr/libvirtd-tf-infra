@@ -2,7 +2,8 @@
 *.tfvars
 terraform.tfstate*
 **/*.qcow2
+**/*.img
 hosts.*
 inventory.*
-!*.tpl
+!*.tftpl
 

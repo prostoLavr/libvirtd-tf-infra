@@ -47,15 +47,22 @@ resource "libvirt_volume" "fedora_base" {
 
 resource "libvirt_volume" "vm_disk" {
   count          = var.vm_count
-  name           = "fedora-vm-disk-${count.index}.qcow2"
+  name           = "libvirt-tf-infra-vm-disk-${count.index}.qcow2"
   base_volume_id = libvirt_volume.fedora_base.id
   pool           = "default"
-  size           = 21474836480 # 20 GB
+  size           = 21474836480 # 20 GB, make flexable 
 }
 
-resource "libvirt_domain" "fedora_vm" {
+resource "libvirt_volume" "vm_raw_disk" {
+  count = var.vm_count
+  name  = "libvirt-tf-infra-vm-raw-disk-${count.index}.qcow2"
+  pool  = "default"
+  size  = 21474836480 # 20 GB, make flexable 
+}
+
+resource "libvirt_domain" "libvirt_tf_infra_vm" {
   count  = var.vm_count
-  name   = "fedora-local-vm-${count.index}"
+  name   = "libvirt-tf-infra-local-vm-${count.index}"
   memory = var.memory_mb
   vcpu   = var.cpus
 
@@ -74,6 +81,12 @@ resource "libvirt_domain" "fedora_vm" {
     volume_id = libvirt_volume.vm_disk[count.index].id
   }
 
+  # TODO: don't attach when ROOK-CEPH is not activated
+  disk {
+    volume_id = libvirt_volume.vm_raw_disk[count.index].id
+  }
+
+
   console {
     type        = "pty"
     target_port = "0"
@@ -89,7 +102,7 @@ resource "libvirt_domain" "fedora_vm" {
 
 output "vm_ip" {
   value = {
-    for vm in libvirt_domain.fedora_vm : vm.name => flatten(vm.network_interface[*].addresses)
+    for vm in libvirt_domain.libvirt_tf_infra_vm : vm.name => flatten(vm.network_interface[*].addresses)
   }
   description = "Local IP"
 }
@@ -98,7 +111,7 @@ resource "local_file" "hosts" {
   filename = "./hosts.yaml"
   content = templatefile("${path.module}/hosts.tpl.yml", {
     servers = [
-      for vm in libvirt_domain.fedora_vm : {
+      for vm in libvirt_domain.libvirt_tf_infra_vm : {
         name = vm.name
         ip   = flatten(vm.network_interface[*].addresses)[0]
       }
@@ -110,13 +123,13 @@ resource "local_file" "inventory" {
   filename = "./inventory.ini"
   content = templatefile("${path.module}/inventory.tpl.ini", {
     control_planes = [
-      for vm in slice(libvirt_domain.fedora_vm, 0, 1) : {
+      for vm in slice(libvirt_domain.libvirt_tf_infra_vm, 0, 1) : {
         name = vm.name
         ip   = flatten(vm.network_interface[*].addresses)[0]
       }
     ],
     nodes = [
-      for vm in slice(libvirt_domain.fedora_vm, 1, length(libvirt_domain.fedora_vm)) : {
+      for vm in slice(libvirt_domain.libvirt_tf_infra_vm, 1, length(libvirt_domain.libvirt_tf_infra_vm)) : {
         name = vm.name
         ip   = flatten(vm.network_interface[*].addresses)[0]
       }
